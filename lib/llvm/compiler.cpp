@@ -251,7 +251,7 @@ struct LLVM::Compiler::CompileContext {
                 // StopToken
                 Int32PtrTy,
                 // StackLimit
-                Int8PtrTy,
+                Int64Ty,
             })),
         ExecCtxPtrTy(ExecCtxTy.getPointerTo()),
         IntrinsicsTableTy(LLVM::Type::getArrayType(
@@ -533,10 +533,8 @@ public:
           Builder.createIntrinsic(LLVM::Core::StackSave, {Context.Int8PtrTy},
                                   {}),
           Context.Int64Ty);
-      auto StackLimit = Builder.createPtrToInt(
-          Context.getStackLimit(Builder, ExecCtx), Context.Int64Ty);
-      auto StackOkBB =
-          LLVM::BasicBlock::create(LLContext, F.Fn, "stack.ok");
+      auto StackLimit = Context.getStackLimit(Builder, ExecCtx);
+      auto StackOkBB = LLVM::BasicBlock::create(LLContext, F.Fn, "stack.ok");
       auto HasSpace =
           Builder.createLikely(Builder.createICmpUGE(CurrSP, StackLimit));
       Builder.createCondBr(HasSpace, StackOkBB,

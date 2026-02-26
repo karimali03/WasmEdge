@@ -23,61 +23,55 @@ namespace {
 
 constexpr size_t StackGuardSize = 64 * 1024;
 
-uint8_t *computeThreadStackLimit() noexcept {
+uintptr_t computeThreadStackLimit() noexcept {
   uint8_t Marker;
   auto *Fallback = const_cast<uint8_t *>(
       reinterpret_cast<const uint8_t *>(&Marker) - StackGuardSize);
+
+  uint8_t *StackLow = nullptr;
+  size_t StackSize = 0;
+  size_t GuardSize = 0;
 
 #if WASMEDGE_OS_LINUX
   pthread_attr_t Attr;
   if (pthread_getattr_np(pthread_self(), &Attr) == 0) {
     void *StackBase = nullptr;
-    size_t StackSize = 0;
-    size_t GuardSize = 0;
     if (pthread_attr_getstack(&Attr, &StackBase, &StackSize) == 0) {
       if (pthread_attr_getguardsize(&Attr, &GuardSize) != 0) {
         GuardSize = 0;
       }
-      pthread_attr_destroy(&Attr);
-      auto *StackLow = static_cast<uint8_t *>(StackBase);
-      const size_t GuardMargin =
-          GuardSize > StackGuardSize ? GuardSize : StackGuardSize;
-      const size_t Margin =
-          StackSize < GuardMargin ? StackSize : GuardMargin;
-      return StackLow + Margin;
+      StackLow = static_cast<uint8_t *>(StackBase);
     }
     pthread_attr_destroy(&Attr);
   }
-  return Fallback;
 #elif WASMEDGE_OS_MACOS
   auto Thread = pthread_self();
   auto *StackHigh = static_cast<uint8_t *>(pthread_get_stackaddr_np(Thread));
-  const size_t StackSize = pthread_get_stacksize_np(Thread);
+  StackSize = pthread_get_stacksize_np(Thread);
   if (StackHigh != nullptr && StackSize > 0) {
-    auto *StackLow = StackHigh - StackSize;
-    const size_t Margin =
-        StackSize < StackGuardSize ? StackSize : StackGuardSize;
-    return StackLow + Margin;
+    StackLow = StackHigh - StackSize;
   }
-  return Fallback;
 #elif WASMEDGE_OS_WINDOWS
-  winapi::ULONG_PTR_ StackLow = 0;
-  winapi::ULONG_PTR_ StackHigh = 0;
-  winapi::GetCurrentThreadStackLimits(&StackLow, &StackHigh);
-  if (StackHigh > StackLow) {
-    const size_t StackSize = static_cast<size_t>(StackHigh - StackLow);
-    const size_t Margin =
-        StackSize < StackGuardSize ? StackSize : StackGuardSize;
-    return reinterpret_cast<uint8_t *>(StackLow + Margin);
+  winapi::ULONG_PTR_ WinStackLow = 0;
+  winapi::ULONG_PTR_ WinStackHigh = 0;
+  winapi::GetCurrentThreadStackLimits(&WinStackLow, &WinStackHigh);
+  if (WinStackHigh > WinStackLow) {
+    StackSize = static_cast<size_t>(WinStackHigh - WinStackLow);
+    StackLow = reinterpret_cast<uint8_t *>(WinStackLow);
   }
-  return Fallback;
-#else
-  return Fallback;
 #endif
+
+  if (StackLow != nullptr && StackSize > 0) {
+    const size_t GuardMargin = GuardSize + StackGuardSize;
+    const size_t Margin = StackSize < GuardMargin ? StackSize : GuardMargin;
+    return reinterpret_cast<uintptr_t>(StackLow + Margin);
+  }
+
+  return reinterpret_cast<uintptr_t>(Fallback);
 }
 
-uint8_t *queryThreadStackLimit() noexcept {
-  static thread_local uint8_t *ThreadStackLimit = computeThreadStackLimit();
+uintptr_t queryThreadStackLimit() noexcept {
+  static thread_local uintptr_t ThreadStackLimit = computeThreadStackLimit();
   return ThreadStackLimit;
 }
 
